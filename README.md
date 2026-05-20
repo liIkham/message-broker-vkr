@@ -73,6 +73,34 @@ python -m app.api_service.rabbit
 - `http://localhost:15672`
 - логин/пароль: `guest/guest`
 
+## Запуск API
+
+API-сервис реализован на FastAPI и принимает уведомления через HTTP endpoint `POST /notify`. После получения запроса сервис формирует сообщение с уникальным `id`, временем создания в UTC и отправляет его в RabbitMQ через очередь `notifications`.
+
+1. Запустите RabbitMQ:
+```bash
+docker compose up -d
+```
+
+2. Запустите API:
+```bash
+uvicorn app.api_service.main:app --reload
+```
+
+3. Проверьте health endpoint:
+```bash
+curl http://localhost:8000/health
+```
+
+4. Отправьте уведомление:
+```powershell
+curl.exe -X POST http://localhost:8000/notify `
+  -H "Content-Type: application/json" `
+  -d "{\"event\":\"user_registered\",\"source\":\"api\",\"severity\":\"info\",\"text\":\"New user registered\",\"payload\":{\"user_id\":123}}"
+```
+
+В ответ API вернет JSON со статусом `queued` и идентификатором сообщения.
+
 ## Проверка сценария ошибки и DLQ
 
 Чтобы проверить перенос в DLQ, отправьте сообщение с `event = "fail"`.
@@ -82,3 +110,8 @@ python -m app.api_service.rabbit
 - в логе consumer появится строка `ERROR ... moved to DLQ`
 - сообщение исчезнет из `notifications`
 - сообщение появится в `notifications.dlq`
+
+
+
+
+
