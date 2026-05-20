@@ -15,16 +15,25 @@
 
 ## Как устроен проект
 
-Структура:
-- `app/api_service/rabbit.py` — модуль отправки сообщений в RabbitMQ.
-- `app/consumer_service/consumer.py` — consumer, который читает `notifications` и обрабатывает сообщения.
-- `tests/` — директория под автотесты.
-- `docker-compose.yml` — локальный запуск RabbitMQ.
+## Архитектура проекта
 
-RabbitMQ запускается в Docker на образе `rabbitmq:3-management`:
-- AMQP: `localhost:5672`
-- Web UI: `http://localhost:15672`
-- По умолчанию логин/пароль: `guest/guest`
+```mermaid
+flowchart LR
+  A["Источник сетевого события / мониторинг"] --> B["Notification API / Producer"]
+  B -->|"JSON-сообщение"| RMQ["RabbitMQ"]
+  RMQ --> Q[("Очередь notifications")]
+  Q --> C["Consumer: обработчик уведомлений"]
+
+  C -->|"SUCCESS"| ACK["basic_ack: сообщение обработано"]
+  ACK --> D["Логирование результата / имитация доставки уведомления"]
+
+  C -->|"Ошибка обработки"| R{"retry-count < 3?"}
+  R -->|"да"| S["Backoff 1/3/5 сек; увеличение x-retry-count; переотправка в notifications"]
+  S --> Q
+
+  R -->|"нет"| DLQ[("Очередь ошибок notifications.dlq")]
+  DLQ --> E["Разбор ошибок / повторная обработка вручную"]
+```
 
 ## Логика работы сообщений
 
@@ -34,10 +43,11 @@ RabbitMQ запускается в Docker на образе `rabbitmq:3-manageme
 4. Если JSON разобран успешно и событие валидное:
 - выводит `SUCCESS ...` в stdout
 - выполняет `basic_ack`
-5. Если JSON некорректный или возникает любая ошибка обработки (включая симуляцию `event == "fail"`):
-- исходное тело сообщения публикуется в `notifications.dlq`
-- исходное сообщение подтверждается через `basic_ack`
-- в stdout выводится `ERROR ... moved to DLQ`
+5. Если JSON некорректный или возникает ошибка обработки:
+- consumer выполняет повторные попытки обработки сообщения (включая симуляцию `event == "fail"`);
+- количество попыток хранится в заголовке x-retry-count;
+- после 3 неудачных попыток сообщение отправляется в notifications.dlq;
+- исходное сообщение подтверждается через basic_ack, чтобы избежать бесконечного повторения.
 
 ## Переменные окружения
 
@@ -73,45 +83,12 @@ python -m app.api_service.rabbit
 - `http://localhost:15672`
 - логин/пароль: `guest/guest`
 
-## Запуск API
-
-API-сервис реализован на FastAPI и принимает уведомления через HTTP endpoint `POST /notify`. После получения запроса сервис формирует сообщение с уникальным `id`, временем создания в UTC и отправляет его в RabbitMQ через очередь `notifications`.
-
-1. Запустите RabbitMQ:
-```bash
-docker compose up -d
-```
-
-2. Запустите API:
-```bash
-uvicorn app.api_service.main:app --reload
-```
-
-3. Проверьте health endpoint:
-```bash
-curl http://localhost:8000/health
-```
-
-4. Отправьте уведомление:
-```powershell
-curl.exe -X POST http://localhost:8000/notify `
-  -H "Content-Type: application/json" `
-  -d "{\"event\":\"user_registered\",\"source\":\"api\",\"severity\":\"info\",\"text\":\"New user registered\",\"payload\":{\"user_id\":123}}"
-```
-
-В ответ API вернет JSON со статусом `queued` и идентификатором сообщения.
-
 ## Проверка сценария ошибки и DLQ
 
 Чтобы проверить перенос в DLQ, отправьте сообщение с `event = "fail"`.
 Текущая CLI-версия producer уже отправляет такое тестовое сообщение.
 
 Ожидаемый результат:
-- в логе consumer появится строка `ERROR ... moved to DLQ`
-- сообщение исчезнет из `notifications`
-- сообщение появится в `notifications.dlq`
-
-
-
-
-
+- в логе consumer появятся строки `RETRY 1`, `RETRY 2`, `RETRY 3`, затем `DLQ`;
+- сообщение исчезнет из `notifications`;
+- сообщение появится в `notifications.dlq`.
