@@ -15,6 +15,14 @@
 
 ## Как устроен проект
 
+Основные файлы проекта:
+- `app/api_service/main.py` — FastAPI API.
+- `app/api_service/rabbit.py` — публикация сообщений в RabbitMQ.
+- `app/consumer_service/consumer.py` — обработка сообщений, retry и DLQ.
+- `tests/send_many.py` — массовая проверка.
+- `docker-compose.yml` — запуск RabbitMQ, API и consumer.
+- `Dockerfile` — сборка Python-сервисов.
+
 ## Архитектура проекта
 
 ```mermaid
@@ -58,6 +66,32 @@ flowchart LR
 - `RABBITMQ_PASS` (по умолчанию `guest`)
 
 ## Быстрый запуск
+
+1. Собрать и запустить всю систему:
+
+```bash
+docker compose up --build -d
+```
+
+2. Проверить состояние контейнеров:
+
+```bash
+docker compose ps
+```
+
+3. Открыть RabbitMQ UI:
+- `http://localhost:15672`
+- логин/пароль: `guest` / `guest`
+
+4. Открыть Swagger UI:
+- `http://127.0.0.1:8000/docs`
+
+5. Смотреть логи consumer:
+
+```bash
+docker compose logs -f consumer
+```
+
 ## Запуск API
 
 Для запуска FastAPI-сервиса используется команда:
@@ -155,6 +189,7 @@ DLQ
 - в логе consumer появятся строки `RETRY 1`, `RETRY 2`, `RETRY 3`, затем `DLQ`;
 - сообщение исчезнет из `notifications`;
 - сообщение появится в `notifications.dlq`.
+
 ## Массовая проверка обработки сообщений
 
 Для массовой проверки можно использовать тестовый скрипт `tests/send_many.py`. Он отправляет 25 сообщений в RabbitMQ:
@@ -182,4 +217,30 @@ Sent 25 messages: 20 normal, 5 failed
 Ожидаемый результат в RabbitMQ UI после обработки:
 - `notifications` Ready = `0`;
 - `notifications.dlq` Ready = `5`.
+
+## Результаты тестирования
+
+В рамках проверки проекта были выполнены основные сценарии работы API, RabbitMQ, consumer-сервиса, retry-механики и DLQ.
+
+Проверенные сценарии:
+- `GET /health` возвращает `{"status": "ok"}` и подтверждает, что API-сервис запущен.
+- `POST /notify` возвращает `{"status": "queued", "id": "..."}` и отправляет сообщение в очередь RabbitMQ `notifications`.
+- Consumer обрабатывает корректные сообщения и выводит `SUCCESS` в логах.
+- Ошибочные сообщения с `event="fail"` проходят `RETRY 1`, `RETRY 2`, `RETRY 3`, после чего попадают в очередь `notifications.dlq`.
+
+Результат массового теста:
+- скрипт `tests/send_many.py` отправляет 25 сообщений;
+- 20 корректных сообщений обработаны успешно;
+- 5 ошибочных сообщений после повторных попыток попали в DLQ;
+- после завершения обработки `notifications` Ready = `0`, `notifications.dlq` Ready = `5`.
+
+| Сценарий | Ожидаемый результат | Фактический результат |
+| --- | --- | --- |
+| Проверка `GET /health` | API возвращает `{"status": "ok"}` | API вернул `{"status": "ok"}` |
+| Отправка сообщения через `POST /notify` | API возвращает `{"status": "queued", "id": "..."}` и публикует сообщение в `notifications` | Сообщение поставлено в очередь `notifications` |
+| Обработка корректных сообщений consumer-сервисом | В логах появляется `SUCCESS`, сообщение подтверждается через `basic_ack` | Корректные сообщения обработаны, в логах появился `SUCCESS` |
+| Обработка ошибочных сообщений `event="fail"` | Сообщения проходят `RETRY 1`, `RETRY 2`, `RETRY 3` и переносятся в `notifications.dlq` | 5 ошибочных сообщений перенесены в `notifications.dlq` |
+| Массовый тест `tests/send_many.py` | 20 сообщений обработаны успешно, 5 сообщений попали в DLQ, `notifications` Ready = `0`, `notifications.dlq` Ready = `5` | Результат соответствует ожидаемому: `notifications` Ready = `0`, `notifications.dlq` Ready = `5` |
+
+
 
