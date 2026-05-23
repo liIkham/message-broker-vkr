@@ -19,18 +19,7 @@ def get_connection() -> pika.BlockingConnection:
     password = os.getenv("RABBITMQ_PASS", "guest")
     credentials = pika.PlainCredentials(username=user, password=password)
     parameters = pika.ConnectionParameters(host=host, port=port, credentials=credentials)
-    last_error = None
-
-    for attempt in range(1, 11):
-        try:
-            return pika.BlockingConnection(parameters)
-        except pika.exceptions.AMQPError as exc:
-            last_error = exc
-            print(f"Waiting for RabbitMQ... attempt {attempt}/10", flush=True)
-            if attempt < 10:
-                time.sleep(3)
-
-    raise last_error
+    return pika.BlockingConnection(parameters)
 
 
 def _extract_retry_count(properties: pika.spec.BasicProperties | None) -> int:
@@ -107,5 +96,3 @@ def run_consumer() -> None:
 
 if __name__ == "__main__":
     run_consumer()
-
-
