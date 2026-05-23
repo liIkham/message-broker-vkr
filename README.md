@@ -58,30 +58,93 @@ flowchart LR
 - `RABBITMQ_PASS` (по умолчанию `guest`)
 
 ## Быстрый запуск
+## Запуск API
 
-1. Поднять RabbitMQ:
+Для запуска FastAPI-сервиса используется команда:
+
 ```bash
-docker compose up -d
+uvicorn app.api_service.main:app --reload
 ```
 
-2. Проверить, что контейнер healthy:
-```bash
-docker compose ps
+После запуска API будет доступен по адресу:
+
+- Swagger UI: `http://127.0.0.1:8000/docs`
+- Health-check: `http://127.0.0.1:8000/health`
+
+Проверка `/health` должна вернуть:
+
+```json
+{
+  "status": "ok"
+}
 ```
 
-3. Запустить consumer:
+## Отправка уведомления через API
+
+Endpoint `POST /notify` принимает JSON-сообщение и публикует его в очередь RabbitMQ `notifications`.
+
+Пример запроса:
+
+```bash
+curl -X POST "http://127.0.0.1:8000/notify" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "event": "packet_loss_alert",
+    "source": "router-01",
+    "severity": "critical",
+    "text": "Потери пакетов выше нормы",
+    "payload": {
+      "packet_loss": 18,
+      "threshold": 10
+    }
+  }'
+```
+
+Пример ответа API:
+
+```json
+{
+  "status": "queued",
+  "id": "uuid-сообщения"
+}
+```
+
+## Проверка результата
+
+После отправки запроса на `/notify` сообщение попадает в очередь `notifications`.
+
+Если consumer запущен:
+
 ```bash
 python -m app.consumer_service.consumer
 ```
 
-4. В другом терминале отправить тестовое сообщение:
-```bash
-python -m app.api_service.rabbit
+то он получает сообщение, обрабатывает его и выводит:
+
+```text
+SUCCESS
 ```
 
-5. Открыть панель RabbitMQ:
-- `http://localhost:15672`
-- логин/пароль: `guest/guest`
+После успешной обработки consumer отправляет подтверждение `basic_ack`, и сообщение удаляется из очереди.
+
+Если отправить сообщение с полем:
+
+```json
+{
+  "event": "fail"
+}
+```
+
+consumer выполнит повторные попытки обработки:
+
+```text
+RETRY 1
+RETRY 2
+RETRY 3
+DLQ
+```
+
+После трёх неудачных попыток сообщение будет перенесено в очередь ошибок `notifications.dlq`.
 
 ## Проверка сценария ошибки и DLQ
 

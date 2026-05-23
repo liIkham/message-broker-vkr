@@ -22,10 +22,13 @@ def publish_notification(message: dict) -> None:
 
 
 if __name__ == "__main__":
+
     test_message = {
-        "event": "test_notification",
-        "source": "cli",
-        "text": "RabbitMQ publish test",
+    "event": "fail",
+    "source": "cli",
+    "text": "RabbitMQ publish test",
     }
+    
+   
     publish_notification(test_message)
     print("Test message published to notifications queue")

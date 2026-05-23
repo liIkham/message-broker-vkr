@@ -19,7 +19,18 @@ def get_connection() -> pika.BlockingConnection:
     password = os.getenv("RABBITMQ_PASS", "guest")
     credentials = pika.PlainCredentials(username=user, password=password)
     parameters = pika.ConnectionParameters(host=host, port=port, credentials=credentials)
-    return pika.BlockingConnection(parameters)
+    last_error = None
+
+    for attempt in range(1, 11):
+        try:
+            return pika.BlockingConnection(parameters)
+        except pika.exceptions.AMQPError as exc:
+            last_error = exc
+            print(f"Waiting for RabbitMQ... attempt {attempt}/10", flush=True)
+            if attempt < 10:
+                time.sleep(3)
+
+    raise last_error
 
 
 def _extract_retry_count(properties: pika.spec.BasicProperties | None) -> int:
@@ -51,7 +62,7 @@ def on_message(
         payload = json.loads(body.decode("utf-8"))
         if payload.get("event") == "fail":
             raise Exception("Simulated failure")
-        print("SUCCESS")
+        print("SUCCESS", flush=True)
         channel.basic_ack(delivery_tag=method.delivery_tag)
     except Exception:
         if retry_count < 3:
@@ -69,7 +80,7 @@ def on_message(
                 ),
             )
             channel.basic_ack(delivery_tag=method.delivery_tag)
-            print(f"RETRY {next_retry}")
+            print(f"RETRY {next_retry}", flush=True)
         else:
             channel.basic_publish(
                 exchange="",
@@ -81,7 +92,7 @@ def on_message(
                 ),
             )
             channel.basic_ack(delivery_tag=method.delivery_tag)
-            print("DLQ")
+            print("DLQ", flush=True)
 
 
 def run_consumer() -> None:
@@ -96,3 +107,5 @@ def run_consumer() -> None:
 
 if __name__ == "__main__":
     run_consumer()
+
+
